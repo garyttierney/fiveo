@@ -1,0 +1,7 @@
+[package]
+name = "fiveo"
+version = "0.1.0"
+authors = ["Gary Tierney <gary.tierney@gmx.com>"]
+
+[profile.release]
+debug = true
