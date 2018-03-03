@@ -1,13 +1,22 @@
 #![crate_name = "fiveo"]
 #![crate_type = "lib"]
 
+use std::cmp;
 use std::str;
 use std::iter;
 
+use std::collections::BinaryHeap;
+
+mod levenshtein;
+
+/// A trait that defines a type that can be mapped to a bitmap offset used
+/// to create a fast `String::contains` mask for a dictionhary entry.
 trait CandidateBitmaskOffset: Sized {
     fn offset(&self) -> Result<usize, &'static str>;
 }
 
+/// A bitmask offset implementation for ASCII characters that treats the 'a' - 'z' range as
+/// bits 1-26.
 impl CandidateBitmaskOffset for char {
     fn offset(&self) -> Result<usize, &'static str> {
         if self.is_ascii() && self.is_alphabetic() {
@@ -19,7 +28,7 @@ impl CandidateBitmaskOffset for char {
 }
 
 /// A 32-bit bitmask that maps the alphabet to the first 25 bits.
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct CandidateBitmask(u32);
 
 impl CandidateBitmask {
@@ -41,24 +50,28 @@ impl CandidateBitmask {
 
         CandidateBitmask(bitmask)
     }
-}
 
-impl PartialEq for CandidateBitmask {
-    fn eq(&self, other: &CandidateBitmask) -> bool {
-        (self.0 & other.0) == other.0
+    fn matches(&self, other: &Self) -> bool {
+        (&self.0 & other.0) == self.0
     }
 }
 
-impl Eq for CandidateBitmask {}
-
-#[derive(Debug, PartialEq, Eq)]
+/// A match candidate in a `Matcher`s dictionary.
+#[derive(Clone, Debug, PartialEq)]
 struct Candidate {
+    /// The original value of this entry in the dictionary.
     value: String,
+
+    /// The value of this entry normalized to lowercase.
     lowercase: String,
+
+    /// A bitmask used to perform quick `String::contains` operations for single characters.
     mask: CandidateBitmask,
 }
 
 impl Candidate {
+    /// Create a new `Candidate` from the given string, creating a copy of it, normalizing to lowercase
+    /// and generating a `CandidateBitmask`.
     fn from(value_ref: &str) -> Candidate {
         let value = value_ref.to_owned();
         let lowercase = value_ref.to_lowercase();
@@ -72,23 +85,57 @@ impl Candidate {
     }
 }
 
+/// An approximate search result from a `Search` created by a `Matcher`.
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
+pub struct SearchResult<'a> {
+    /// A reference to the `Candidate` value this result came from.
+    value: &'a str,
+    /// A score of this result ranked against the query string.
+    score: f32,
+}
+
+impl<'a> Eq for SearchResult<'a> {}
+
+impl<'a> Ord for SearchResult<'a> {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        self.score.partial_cmp(&other.score).unwrap()
+    }
+}
+
+impl<'a> SearchResult<'a> {
+    /// Get a reference to the string value of this result.
+    pub fn value(&'a self) -> &'a str {
+        self.value
+    }
+
+    /// Get the score of this result.
+    pub fn score(&self) -> f32 {
+        self.score
+    }
+}
+
 /// A fuzzy-search algorithm that uses bitmasks to perform fast string comparisons.
 ///
 /// Example:
 /// ```rust
-/// let searcher = fuzzed::FuzzySearch::new(b"my_word1\nmy_word2\n").unwrap();
-/// let first_match = searcher.search("word").next().unwrap();
+/// let searcher = fiveo::Matcher::new("my_word1\nmy_word2\n").unwrap();
+/// // Search for "my_word1" and return a maximum of 10 results.
+/// let matches = searcher.search("my_word1", 10);
 ///
-/// assert_eq!("my_word1", first_match.value());
-/// assert_eq!(0.0f32, first_match.score());
+/// assert_eq!("my_word1", matches[0].value());
+/// assert_eq!(1.0f32, matches[0].score());
+/// assert_eq!("my_word2", matches[1].value());
+/// assert!(matches[1].score() < 1.0f32);
 /// ```
 pub struct Matcher {
+    /// A list of entries in this `Matcher`s dictionary.
     candidates: Vec<Candidate>,
 }
 
 impl Matcher {
-    pub fn new(input_data: &[u8]) -> Result<Matcher, &'static str> {
-        let dictionary = unsafe { str::from_utf8_unchecked(input_data) };
+    /// Create a new `Matcher` from the given input data.  The input data should contain
+    /// a list of input entries delimited by newlines that a matching dictionary can be built from.
+    pub fn new(dictionary: &str) -> Result<Matcher, &'static str> {
         let candidates = dictionary
             .lines()
             .map(|line| Candidate::from(&line))
@@ -97,63 +144,54 @@ impl Matcher {
         Ok(Matcher { candidates })
     }
 
-    pub fn search<'a>(&'a self, query: &'a str) -> Search<'a> {
-        Search::new(query, &self.candidates)
-    }
-}
+    /// Search for `Candidate`s that approximately match the given `query` string and return a
+    /// list of `SearchResult`s.
+    pub fn search<'a>(&'a self, query: &'a str, max_results: usize) -> Vec<SearchResult<'a>> {
+        let query_len = query.len();
+        let query_lowercase = query.to_lowercase();
+        let query_lowercase_chars: Vec<char> = query_lowercase.chars().collect();
+        let query_mask = CandidateBitmask::from(&mut query_lowercase.chars());
+        let mut result_heap: BinaryHeap<SearchResult<'a>> = BinaryHeap::new();
 
-pub struct Search<'a> {
-    query: &'a str,
-    query_bitmask: CandidateBitmask,
-    candidates: &'a [Candidate],
-    pos: usize,
-}
-
-impl<'a> Search<'a> {
-    fn new(query: &'a str, candidates: &'a [Candidate]) -> Search<'a> {
-        Search {
-            query,
-            query_bitmask: CandidateBitmask::from(&mut query.chars()),
-            candidates,
-            pos: 0,
-        }
-    }
-}
-
-#[derive(Debug, PartialEq)]
-pub struct SearchResult<'a> {
-    value: &'a str,
-    score: f32,
-}
-
-impl<'a> SearchResult<'a> {
-    pub fn value(&'a self) -> &'a str {
-        self.value
-    }
-
-    pub fn score(&self) -> f32 {
-        self.score
-    }
-}
-
-impl<'a> Iterator for Search<'a> {
-    type Item = SearchResult<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            if self.pos > self.candidates.len() -1 {
-                return None;
+        for candidate in &self.candidates {
+            if !query_mask.matches(&candidate.mask) {
+                continue;
             }
 
-            let candidate = &self.candidates[self.pos];
-            self.pos = self.pos + 1;
+            let candidate_chars: Vec<char> = candidate.lowercase.chars().collect();
 
-            if candidate.mask == self.query_bitmask {
-                return Some(SearchResult {
-                    value: candidate.value.as_str(),
-                    score: 0.0f32,
-                });
+            let (longest, shortest) = if query_lowercase_chars.len() > candidate_chars.len() {
+                (&query_lowercase_chars, &candidate_chars)
+            } else {
+                (&candidate_chars, &query_lowercase_chars)
+            };
+
+            let shortest_len = shortest.len();
+            let longest_len = longest.len();
+
+            let edit_distance =
+                levenshtein::edit_distance(&longest, longest_len - 1, &shortest, shortest_len - 1);
+            let score = (longest_len - edit_distance) as f32 / longest_len as f32;
+
+            if score > 0.0f32 {
+                let is_higher_scoring = result_heap
+                    .peek()
+                    .map(|rs| score > rs.score())
+                    .unwrap_or(false);
+
+                if is_higher_scoring || result_heap.len() < max_results {
+                    result_heap.push(SearchResult {
+                        value: &candidate.value,
+                        score,
+                    })
+                }
+
+                if result_heap.capacity() > max_results {
+                    result_heap.pop();
+                }
             }
         }
+
+        result_heap.into_sorted_vec()
     }
 }
