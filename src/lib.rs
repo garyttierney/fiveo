@@ -151,7 +151,7 @@ impl Matcher {
         let query_lowercase = query.to_lowercase();
         let query_lowercase_chars: Vec<char> = query_lowercase.chars().collect();
         let query_mask = CandidateBitmask::from(&mut query_lowercase.chars());
-        let mut result_heap: BinaryHeap<SearchResult<'a>> = BinaryHeap::new();
+        let mut result_heap: BinaryHeap<SearchResult<'a>> = BinaryHeap::with_capacity(max_results);
 
         for candidate in &self.candidates {
             if !query_mask.matches(&candidate.mask) {
