@@ -11,11 +11,13 @@ matrix:
 before_deploy:
   - cargo doc
   - cargo package
+  - export TAG_PREFIX="v"
+  - export CARGO_TAG=${TRAVIS_TAG#$TAG_PREFIX}; #Remove prefix
 
 deploy:
   provider: releases
   api_key: "$GITHUB_TOKEN"
-  file: target/package/fiveo-$TRAVIS_TAG.crate
+  file: target/package/fiveo-$CARGO_TAG.crate
   skip_cleanup: true
   on:
     tags: true
