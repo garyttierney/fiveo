@@ -1,13 +1,12 @@
 #![crate_name = "fiveo"]
 #![crate_type = "lib"]
 
+extern crate strsim;
+
 use std::cmp;
 use std::str;
 use std::iter;
-
 use std::collections::BinaryHeap;
-
-mod levenshtein;
 
 /// A trait that defines a type that can be mapped to a bitmap offset used
 /// to create a fast `String::contains` mask for a dictionhary entry.
@@ -132,10 +131,23 @@ pub struct Matcher {
     candidates: Vec<Candidate>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MatcherError {
+    TextEncoding(str::Utf8Error)
+}
+
+impl From<MatcherError> for u32 {
+    fn from(t: MatcherError) -> u32 {
+        match t {
+            MatcherError::TextEncoding(_) => 1,
+        }
+    }
+}
+
 impl Matcher {
     /// Create a new `Matcher` from the given input data.  The input data should contain
     /// a list of input entries delimited by newlines that a matching dictionary can be built from.
-    pub fn new(dictionary: &str) -> Result<Matcher, &'static str> {
+    pub fn new(dictionary: &str) -> Result<Matcher, MatcherError> {
         let candidates = dictionary
             .lines()
             .map(|line| Candidate::from(&line))
@@ -147,9 +159,7 @@ impl Matcher {
     /// Search for `Candidate`s that approximately match the given `query` string and return a
     /// list of `SearchResult`s.
     pub fn search<'a>(&'a self, query: &'a str, max_results: usize) -> Vec<SearchResult<'a>> {
-        let query_len = query.len();
         let query_lowercase = query.to_lowercase();
-        let query_lowercase_chars: Vec<char> = query_lowercase.chars().collect();
         let query_mask = CandidateBitmask::from(&mut query_lowercase.chars());
         let mut result_heap: BinaryHeap<SearchResult<'a>> = BinaryHeap::with_capacity(max_results);
 
@@ -158,19 +168,8 @@ impl Matcher {
                 continue;
             }
 
-            let candidate_chars: Vec<char> = candidate.lowercase.chars().collect();
-
-            let (longest, shortest) = if query_lowercase_chars.len() > candidate_chars.len() {
-                (&query_lowercase_chars, &candidate_chars)
-            } else {
-                (&candidate_chars, &query_lowercase_chars)
-            };
-
-            let shortest_len = shortest.len();
-            let longest_len = longest.len();
-
-            let edit_distance =
-                levenshtein::edit_distance(&longest, longest_len - 1, &shortest, shortest_len - 1);
+            let edit_distance = strsim::levenshtein(&query_lowercase, &candidate.value);
+            let longest_len = cmp::max(query.len(), candidate.value.len());
             let score = (longest_len - edit_distance) as f32 / longest_len as f32;
 
             if score > 0.0f32 {
