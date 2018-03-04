@@ -2,6 +2,9 @@
 name = "fiveo"
 version = "0.1.0"
 authors = ["Gary Tierney <gary.tierney@gmx.com>"]
+description = "An approximate string matching library built with the web in mind"
+license = "ISC"
+license-file = "LICENSE"
 
 [dependencies]
 strsim = "0.7.0"
