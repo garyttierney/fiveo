@@ -86,25 +86,25 @@ impl Candidate {
 
 /// An approximate search result from a `Search` created by a `Matcher`.
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
-pub struct SearchResult<'a> {
+pub struct SearchResult {
     /// A reference to the `Candidate` value this result came from.
-    value: &'a str,
+    index: usize,
     /// A score of this result ranked against the query string.
     score: f32,
 }
 
-impl<'a> Eq for SearchResult<'a> {}
+impl Eq for SearchResult {}
 
-impl<'a> Ord for SearchResult<'a> {
+impl Ord for SearchResult {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
         self.score.partial_cmp(&other.score).unwrap()
     }
 }
 
-impl<'a> SearchResult<'a> {
+impl SearchResult {
     /// Get a reference to the string value of this result.
-    pub fn value(&'a self) -> &'a str {
-        self.value
+    pub fn index(&self) -> usize {
+        self.index
     }
 
     /// Get the score of this result.
@@ -121,9 +121,9 @@ impl<'a> SearchResult<'a> {
 /// // Search for "my_word1" and return a maximum of 10 results.
 /// let matches = searcher.search("my_word1", 10);
 ///
-/// assert_eq!("my_word1", matches[0].value());
+/// assert_eq!(0, matches[0].index());
 /// assert_eq!(1.0f32, matches[0].score());
-/// assert_eq!("my_word2", matches[1].value());
+/// assert_eq!(1, matches[1].index());
 /// assert!(matches[1].score() < 1.0f32);
 /// ```
 pub struct Matcher {
@@ -133,7 +133,7 @@ pub struct Matcher {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MatcherError {
-    TextEncoding(str::Utf8Error)
+    TextEncoding(str::Utf8Error),
 }
 
 impl From<MatcherError> for u32 {
@@ -158,12 +158,12 @@ impl Matcher {
 
     /// Search for `Candidate`s that approximately match the given `query` string and return a
     /// list of `SearchResult`s.
-    pub fn search<'a>(&'a self, query: &'a str, max_results: usize) -> Vec<SearchResult<'a>> {
+    pub fn search<'a>(&'a self, query: &'a str, max_results: usize) -> Vec<SearchResult> {
         let query_lowercase = query.to_lowercase();
         let query_mask = CandidateBitmask::from(&mut query_lowercase.chars());
-        let mut result_heap: BinaryHeap<SearchResult<'a>> = BinaryHeap::with_capacity(max_results);
+        let mut result_heap: BinaryHeap<SearchResult> = BinaryHeap::with_capacity(max_results);
 
-        for candidate in &self.candidates {
+        for (idx, candidate) in self.candidates.iter().enumerate() {
             if !query_mask.matches(&candidate.mask) {
                 continue;
             }
@@ -179,10 +179,7 @@ impl Matcher {
                     .unwrap_or(false);
 
                 if is_higher_scoring || result_heap.len() < max_results {
-                    result_heap.push(SearchResult {
-                        value: &candidate.value,
-                        score,
-                    })
+                    result_heap.push(SearchResult { index: idx, score })
                 }
 
                 if result_heap.capacity() > max_results {
