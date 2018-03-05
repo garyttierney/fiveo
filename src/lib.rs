@@ -115,7 +115,8 @@ impl SearchResult {
 
 /// A fuzzy-search algorithm that uses bitmasks to perform fast string comparisons.
 ///
-/// Example:
+/// # Example:
+///
 /// ```rust
 /// let searcher = fiveo::Matcher::new("my_word1\nmy_word2\n").unwrap();
 /// // Search for "my_word1" and return a maximum of 10 results.
