@@ -294,7 +294,7 @@ impl<'a> Matcher<'a> {
         let mut last_slash: Option<usize> = None;
 
         // The growing distance penalty.
-        let mut distance_penalty = 0f32;
+        let mut distance_penalty = self.parameters.distance_penalty;
 
         while let Some((candidate_char_index, candidate_char)) = candidate_chars.next() {
             if remaining_candidate_chars == 0 {
