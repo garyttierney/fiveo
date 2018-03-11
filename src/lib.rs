@@ -11,13 +11,13 @@ extern crate alloc;
 #[cfg(feature = "webassembly")]
 extern crate wee_alloc;
 #[cfg(feature = "webassembly")]
-use {alloc::{BinaryHeap, Vec}, core::{cmp, iter, str, num::Float}};
+use {alloc::{BinaryHeap, Vec}, core::{cmp, iter, str, num::Float, f32}};
 #[cfg_attr(feature = "webasembly", global_allocator)]
 #[cfg(feature = "webassembly")]
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
 #[cfg(not(feature = "webassembly"))]
-use std::{cmp, iter, str, collections::BinaryHeap};
+use std::{f32, cmp, iter, str, collections::BinaryHeap};
 
 /// A 32-bit bitmask that maps the alphabet to the first 25 bits.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -41,7 +41,7 @@ impl CandidateBitmask {
     }
 
     fn matches(&self, other: &Self) -> bool {
-        (&self.0 & other.0) == self.0
+        (self.0 & other.0) == self.0
     }
 }
 
@@ -146,10 +146,10 @@ impl From<MatcherError> for u32 {
 impl<'a> Matcher<'a> {
     /// Create a new `Matcher` from the given input data.  The input data should contain
     /// a list of input entries delimited by newlines that a matching dictionary can be built from.
-    pub fn new<'b>(dictionary: &'b str, cache_size: usize) -> Result<Matcher<'b>, MatcherError> {
+    pub fn new(dictionary: &str, cache_size: usize) -> Result<Matcher, MatcherError> {
         let candidates = dictionary
             .lines()
-            .map(|line| Candidate::from(&line))
+            .map(|line| Candidate::from(line))
             .collect();
 
         let parameters = MatcherParameters {
@@ -185,8 +185,8 @@ impl<'a> Matcher<'a> {
             match_score_cache.resize(self.parameters.cache_size, None);
 
             let score = self.score_candidate(
-                &query,
-                &candidate,
+                query,
+                candidate,
                 &mut match_idx_cache,
                 &mut match_score_cache,
             );
@@ -278,12 +278,7 @@ impl<'a> Matcher<'a> {
         // Position of the last back/forwards slash that was found.
         let mut last_slash: Option<usize> = None;
 
-        loop {
-            let (candidate_char_index, candidate_char) = match candidate_chars.next() {
-                Some((idx, ch)) => (idx, ch),
-                _ => break,
-            };
-
+        while let Some((candidate_char_index, candidate_char)) = candidate_chars.next()  {
             if remaining_candidate_chars == 0 {
                 break;
             }
@@ -321,21 +316,21 @@ impl<'a> Matcher<'a> {
                     );
 
                 if query_char_index == 0 {
-                    new_score = new_score / (candidate_len - last_slash.unwrap_or(0)) as f32;
+                    new_score /= (candidate_len - last_slash.unwrap_or(0)) as f32;
                 }
 
                 if new_score > score {
                     score = new_score;
                     best_match_index = Some(candidate_char_index);
 
-                    if score == 1.0f32 {
+                    if f32::abs(score - 1.0f32) < f32::EPSILON {
                         break;
                     }
                 }
             }
 
             last_candidate_char = Some(candidate_char);
-            remaining_candidate_chars = remaining_candidate_chars - 1;
+            remaining_candidate_chars -= 1;
         }
 
         // Store the results in the cache so we don't have to run this computation again during this search.
