@@ -113,6 +113,15 @@ pub struct MatcherParameters {
     /// The size of the cache that will be allocated each search for memoizing score function calls.  Query/candidate pairs exceeding
     /// this size will only be matched using the simple matcher.
     cache_size: usize,
+
+    /// The base distance penalty for matches occurring after proceeding without a successful match.
+    distance_penalty: f32,
+
+    /// The lowest value the distance penalty can decrease to.
+    min_distance_penalty: f32,
+
+    /// The increment that the distance penalty decreases in.
+    cumulative_distance_penalty: f32,
 }
 
 /// Define a sane set of default `MatcherParameters` that adhere to the same parameters followed by Cmd-T.
@@ -127,6 +136,9 @@ impl Default for MatcherParameters {
             period_bonus: 0.7f32,
             max_gap: 10,
             cache_size: 2000,
+            distance_penalty: 0.6f32,
+            min_distance_penalty: 0.2f32 + f32::EPSILON,
+            cumulative_distance_penalty: 0.05f32,
         }
     }
 }
@@ -281,6 +293,9 @@ impl<'a> Matcher<'a> {
         // Position of the last back/forwards slash that was found.
         let mut last_slash: Option<usize> = None;
 
+        // The growing distance penalty.
+        let mut distance_penalty = 0f32;
+
         while let Some((candidate_char_index, candidate_char)) = candidate_chars.next() {
             if remaining_candidate_chars == 0 {
                 break;
@@ -304,11 +319,15 @@ impl<'a> Matcher<'a> {
                                 self.parameters.camelcase_bonus
                             }
                             '.' => self.parameters.period_bonus,
-                            _ => 0.6f32,
+                            _ => distance_penalty,
                         },
-                        _ => 0.6f32,
+                        _ => distance_penalty,
                     }
                 };
+
+                if query_char_index > 0 && distance_penalty > self.parameters.min_distance_penalty {
+                    distance_penalty -= self.parameters.cumulative_distance_penalty;
+                }
 
                 let mut new_score = query_char_score
                     * self.score_candidate_recursive(
