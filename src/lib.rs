@@ -1,12 +1,16 @@
 #![crate_name = "fiveo"]
 #![crate_type = "lib"]
+// We aren't using the standard library.
+// Required to use the `alloc` crate and its types, the `abort` intrinsic, and a
+// custom panic handler.
+#![feature(alloc, core_intrinsics, lang_items)]
 
-extern crate strsim;
+extern crate alloc;
+extern crate wee_alloc;
 
-use std::cmp;
-use std::str;
-use std::iter;
-use std::collections::BinaryHeap;
+use alloc::String;
+use alloc::{BinaryHeap, Vec};
+use std::{cmp, iter, str};
 
 /// A trait that defines a type that can be mapped to a bitmap offset used
 /// to create a fast `String::contains` mask for a dictionhary entry.
@@ -57,9 +61,9 @@ impl CandidateBitmask {
 
 /// A match candidate in a `Matcher`s dictionary.
 #[derive(Clone, Debug, PartialEq)]
-struct Candidate {
+struct Candidate<'a> {
     /// The original value of this entry in the dictionary.
-    value: String,
+    value: &'a str,
 
     /// The value of this entry normalized to lowercase.
     lowercase: String,
@@ -68,12 +72,11 @@ struct Candidate {
     mask: CandidateBitmask,
 }
 
-impl Candidate {
+impl<'a> Candidate<'a> {
     /// Create a new `Candidate` from the given string, creating a copy of it, normalizing to lowercase
     /// and generating a `CandidateBitmask`.
-    fn from(value_ref: &str) -> Candidate {
-        let value = value_ref.to_owned();
-        let lowercase = value_ref.to_lowercase();
+    fn from(value: &'a str) -> Candidate<'a> {
+        let lowercase = value.to_lowercase();
         let mask = CandidateBitmask::from(&mut lowercase.chars());
 
         Candidate {
@@ -113,12 +116,33 @@ impl SearchResult {
     }
 }
 
+pub struct MatcherParameters {
+    /// The bonus for a matching character found after a slash.
+    slash_bonus: f32,
+
+    /// The bonus for a matching character found after a separator.
+    separator_bonus: f32,
+
+    /// The bonus for a matching character found as a separator of a CamelCase string.
+    camelcase_bonus: f32,
+
+    /// The bonus for a matching character found after a period.
+    period_bonus: f32,
+
+    /// The maximum gap between a search character and a match to be considered before moving to the next character.
+    max_gap: usize,
+
+    /// The size of the cache that will be allocated each search for memoizing score function calls.  Query/candidate pairs exceeding
+    /// this size will only be matched using the simple matcher.
+    cache_size: usize,
+}
+
 /// A fuzzy-search algorithm that uses bitmasks to perform fast string comparisons.
 ///
 /// # Example:
 ///
 /// ```rust
-/// let searcher = fiveo::Matcher::new("my_word1\nmy_word2\n").unwrap();
+/// let searcher = fiveo::Matcher::new("my_word1\nmy_word2\n", 1000).unwrap();
 /// // Search for "my_word1" and return a maximum of 10 results.
 /// let matches = searcher.search("my_word1", 10);
 ///
@@ -127,9 +151,10 @@ impl SearchResult {
 /// assert_eq!(1, matches[1].index());
 /// assert!(matches[1].score() < 1.0f32);
 /// ```
-pub struct Matcher {
+pub struct Matcher<'a> {
     /// A list of entries in this `Matcher`s dictionary.
-    candidates: Vec<Candidate>,
+    candidates: Vec<Candidate<'a>>,
+    parameters: MatcherParameters,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -145,33 +170,50 @@ impl From<MatcherError> for u32 {
     }
 }
 
-impl Matcher {
+impl<'a> Matcher<'a> {
     /// Create a new `Matcher` from the given input data.  The input data should contain
     /// a list of input entries delimited by newlines that a matching dictionary can be built from.
-    pub fn new(dictionary: &str) -> Result<Matcher, MatcherError> {
+    pub fn new<'b>(dictionary: &'b str, cache_size: usize) -> Result<Matcher<'b>, MatcherError> {
         let candidates = dictionary
             .lines()
             .map(|line| Candidate::from(&line))
             .collect();
 
-        Ok(Matcher { candidates })
+        let parameters = MatcherParameters {
+            camelcase_bonus: 0.8f32,
+            separator_bonus: 0.8f32,
+            slash_bonus: 0.9f32,
+            period_bonus: 0.7f32,
+            max_gap: 10,
+            cache_size,
+        };
+
+        Ok(Matcher {
+            candidates,
+            parameters,
+        })
     }
 
     /// Search for `Candidate`s that approximately match the given `query` string and return a
     /// list of `SearchResult`s.
-    pub fn search<'a>(&'a self, query: &'a str, max_results: usize) -> Vec<SearchResult> {
+    pub fn search(&self, query: &str, max_results: usize) -> Vec<SearchResult> {
         let query_lowercase = query.to_lowercase();
         let query_mask = CandidateBitmask::from(&mut query_lowercase.chars());
         let mut result_heap: BinaryHeap<SearchResult> = BinaryHeap::with_capacity(max_results);
+        let mut match_idx_cache = vec![None; self.parameters.cache_size];
+        let mut match_score_cache = vec![None; self.parameters.cache_size];
 
-        for (idx, candidate) in self.candidates.iter().enumerate() {
+        for (candidate_index, candidate) in self.candidates.iter().enumerate() {
             if !query_mask.matches(&candidate.mask) {
                 continue;
             }
 
-            let edit_distance = strsim::levenshtein(&query_lowercase, &candidate.value);
-            let longest_len = cmp::max(query.len(), candidate.value.len());
-            let score = (longest_len - edit_distance) as f32 / longest_len as f32;
+            let score = self.score_candidate(
+                &query,
+                &candidate,
+                &mut match_idx_cache,
+                &mut match_score_cache,
+            );
 
             if score > 0.0f32 {
                 let is_higher_scoring = result_heap
@@ -180,7 +222,10 @@ impl Matcher {
                     .unwrap_or(false);
 
                 if is_higher_scoring || result_heap.len() < max_results {
-                    result_heap.push(SearchResult { index: idx, score })
+                    result_heap.push(SearchResult {
+                        index: candidate_index,
+                        score,
+                    })
                 }
 
                 if result_heap.capacity() > max_results {
@@ -190,5 +235,137 @@ impl Matcher {
         }
 
         result_heap.into_sorted_vec()
+    }
+
+    fn score_candidate(
+        &self,
+        query: &str,
+        candidate: &Candidate,
+        match_idx_cache: &mut Vec<Option<usize>>,
+        match_score_cache: &mut Vec<Option<f32>>,
+    ) -> f32 {
+        let query_len = query.len();
+        let candidate_len = candidate.value.len();
+        let score = query_len as f32
+            * self.score_candidate_recursive(
+                &mut query.char_indices().peekable(),
+                query_len,
+                &mut candidate.value.char_indices().peekable(),
+                candidate_len,
+                match_idx_cache,
+                match_score_cache,
+            );
+
+        score.max(0.)
+    }
+
+    fn score_candidate_recursive(
+        &self,
+        query_chars: &mut iter::Peekable<str::CharIndices>,
+        query_len: usize,
+        candidate_chars: &mut iter::Peekable<str::CharIndices>,
+        candidate_len: usize,
+        match_idx_cache: &mut Vec<Option<usize>>,
+        match_score_cache: &mut Vec<Option<f32>>,
+    ) -> f32 {
+        let mut score = 0.0f32;
+
+        // Return a score of 0 if there are no characters remaining to compare.
+        let (query_char_index, query_char) = match query_chars.next() {
+            Some((idx, ch)) => (idx, ch),
+            None => return 1.0f32,
+        };
+
+        // Peek the next character so we can calculate the distance bonus and store an entry in the matches/memo caches
+        // for this call.
+        let candidate_start_index = match candidate_chars.peek() {
+            Some(&(idx, _)) => idx,
+            None => return 1.0f32,
+        };
+
+        // Calculate the position in the memo/best match caches.
+        let cache_offset = query_char_index * candidate_len + candidate_start_index;
+
+        if let Some(cached_score) = match_score_cache[cache_offset] {
+            return cached_score;
+        }
+
+        // The position of the best match.
+        let mut best_match_index: Option<usize> = None;
+
+        // The remaining number of characters to process before the gap is considered too large.
+        let mut remaining_candidate_chars = self.parameters.max_gap;
+
+        // The last character that was checked in the candidate search string.
+        let mut last_candidate_char: Option<char> = None;
+
+        // Position of the last back/forwards slash that was found.
+        let mut last_slash: Option<usize> = None;
+
+        loop {
+            let (candidate_char_index, candidate_char) = match candidate_chars.next() {
+                Some((idx, ch)) => (idx, ch),
+                _ => break,
+            };
+
+            if remaining_candidate_chars == 0 {
+                break;
+            }
+
+            if query_char_index == 0 && (query_char == '\\' || query_char == '/') {
+                last_slash = Some(candidate_char_index);
+            }
+
+            if query_char == candidate_char {
+                let query_char_score = if candidate_char_index == candidate_start_index {
+                    1.0f32
+                } else {
+                    match last_candidate_char {
+                        Some(val) => match val {
+                            '/' => self.parameters.slash_bonus,
+                            '-' | '_' | ' ' | '0'...'9' => self.parameters.separator_bonus,
+                            'a'...'z' if candidate_char.is_uppercase() => {
+                                self.parameters.camelcase_bonus
+                            }
+                            '.' => self.parameters.period_bonus,
+                            _ => 0.6f32,
+                        },
+                        _ => 0.6f32,
+                    }
+                };
+
+                let mut new_score = query_char_score
+                    * self.score_candidate_recursive(
+                        query_chars,
+                        query_len,
+                        candidate_chars,
+                        candidate_len,
+                        match_idx_cache,
+                        match_score_cache,
+                    );
+
+                if query_char_index == 0 {
+                    new_score = new_score / (candidate_len - last_slash.unwrap_or(0)) as f32;
+                }
+
+                if new_score > score {
+                    score = new_score;
+                    best_match_index = Some(candidate_char_index);
+
+                    if score == 1.0f32 {
+                        break;
+                    }
+                }
+            }
+
+            last_candidate_char = Some(candidate_char);
+            remaining_candidate_chars = remaining_candidate_chars - 1;
+        }
+
+        // Store the results in the cache so we don't have to run this computation again during this search.
+        match_score_cache[cache_offset] = Some(score);
+        match_idx_cache[cache_offset] = best_match_index;
+
+        score
     }
 }

@@ -6,8 +6,8 @@ description = "An approximate string matching library built with the web in mind
 license = "ISC"
 license-file = "LICENSE"
 
-[dependencies]
-strsim = "0.7.0"
-
 [profile.release]
 debug = true
+
+[dependencies]
+wee_alloc = "0.2.0"
