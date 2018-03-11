@@ -12,41 +12,20 @@ use alloc::String;
 use alloc::{BinaryHeap, Vec};
 use std::{cmp, iter, str};
 
-/// A trait that defines a type that can be mapped to a bitmap offset used
-/// to create a fast `String::contains` mask for a dictionhary entry.
-trait CandidateBitmaskOffset: Sized {
-    fn offset(&self) -> Result<usize, &'static str>;
-}
-
-/// A bitmask offset implementation for ASCII characters that treats the 'a' - 'z' range as
-/// bits 1-26.
-impl CandidateBitmaskOffset for char {
-    fn offset(&self) -> Result<usize, &'static str> {
-        if self.is_ascii() && self.is_alphabetic() {
-            Ok((*self as u8 - 'a' as u8) as usize)
-        } else {
-            Err("Not an ASCII character")
-        }
-    }
-}
-
 /// A 32-bit bitmask that maps the alphabet to the first 25 bits.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct CandidateBitmask(u32);
 
 impl CandidateBitmask {
-    pub fn from<T>(values: &mut Iterator<Item = T>) -> Self
-    where
-        T: CandidateBitmaskOffset,
-    {
+    pub fn from(values: &mut Iterator<Item = char>) -> Self {
         let mut bitmask = 0 as u32;
 
         loop {
             match values.next() {
-                Some(val) => match val.offset() {
-                    Ok(offset) => bitmask |= 1 << offset,
-                    _ => continue,
+                Some(val) if val.is_ascii() && val.is_alphabetic() =>  {
+                    bitmask |= 1 << (val as u8 - 'a' as u8);
                 },
+                Some(_) => continue,
                 None => break,
             }
         }
