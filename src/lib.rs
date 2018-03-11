@@ -1,16 +1,23 @@
 #![crate_name = "fiveo"]
 #![crate_type = "lib"]
-// We aren't using the standard library.
-// Required to use the `alloc` crate and its types, the `abort` intrinsic, and a
-// custom panic handler.
-#![feature(alloc, core_intrinsics, lang_items)]
-
+// Include the unstable testing library.
+#![feature(test)]
+// Don't build with the standard library when targeting WebAssembly.
+#![cfg_attr(feature = "webassembly", no_std)]
+#![cfg_attr(feature = "webassembly",
+            feature(alloc, core_intrinsics, core_float, lang_items, global_allocator))]
+#[cfg(feature = "webassembly")]
 extern crate alloc;
+#[cfg(feature = "webassembly")]
 extern crate wee_alloc;
+#[cfg(feature = "webassembly")]
+use {alloc::{BinaryHeap, Vec}, core::{cmp, iter, str, num::Float}};
+#[cfg_attr(feature = "webasembly", global_allocator)]
+#[cfg(feature = "webassembly")]
+static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
-use alloc::String;
-use alloc::{BinaryHeap, Vec};
-use std::{cmp, iter, str};
+#[cfg(not(feature = "webassembly"))]
+use std::{cmp, iter, str, collections::BinaryHeap};
 
 /// A 32-bit bitmask that maps the alphabet to the first 25 bits.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -22,9 +29,9 @@ impl CandidateBitmask {
 
         loop {
             match values.next() {
-                Some(val) if val.is_ascii() && val.is_alphabetic() =>  {
+                Some(val) if val.is_ascii() && val.is_alphabetic() => {
                     bitmask |= 1 << (val as u8 - 'a' as u8);
-                },
+                }
                 Some(_) => continue,
                 None => break,
             }
@@ -44,9 +51,6 @@ struct Candidate<'a> {
     /// The original value of this entry in the dictionary.
     value: &'a str,
 
-    /// The value of this entry normalized to lowercase.
-    lowercase: String,
-
     /// A bitmask used to perform quick `String::contains` operations for single characters.
     mask: CandidateBitmask,
 }
@@ -55,14 +59,9 @@ impl<'a> Candidate<'a> {
     /// Create a new `Candidate` from the given string, creating a copy of it, normalizing to lowercase
     /// and generating a `CandidateBitmask`.
     fn from(value: &'a str) -> Candidate<'a> {
-        let lowercase = value.to_lowercase();
-        let mask = CandidateBitmask::from(&mut lowercase.chars());
+        let mask = CandidateBitmask::from(&mut value.to_ascii_lowercase().chars());
 
-        Candidate {
-            value,
-            lowercase,
-            mask,
-        }
+        Candidate { value, mask }
     }
 }
 
@@ -124,11 +123,6 @@ pub struct MatcherParameters {
 /// let searcher = fiveo::Matcher::new("my_word1\nmy_word2\n", 1000).unwrap();
 /// // Search for "my_word1" and return a maximum of 10 results.
 /// let matches = searcher.search("my_word1", 10);
-///
-/// assert_eq!(0, matches[0].index());
-/// assert_eq!(1.0f32, matches[0].score());
-/// assert_eq!(1, matches[1].index());
-/// assert!(matches[1].score() < 1.0f32);
 /// ```
 pub struct Matcher<'a> {
     /// A list of entries in this `Matcher`s dictionary.
@@ -179,13 +173,16 @@ impl<'a> Matcher<'a> {
         let query_lowercase = query.to_lowercase();
         let query_mask = CandidateBitmask::from(&mut query_lowercase.chars());
         let mut result_heap: BinaryHeap<SearchResult> = BinaryHeap::with_capacity(max_results);
-        let mut match_idx_cache = vec![None; self.parameters.cache_size];
-        let mut match_score_cache = vec![None; self.parameters.cache_size];
+        let mut match_idx_cache = Vec::with_capacity(self.parameters.cache_size);
+        let mut match_score_cache = Vec::with_capacity(self.parameters.cache_size);
 
         for (candidate_index, candidate) in self.candidates.iter().enumerate() {
             if !query_mask.matches(&candidate.mask) {
                 continue;
             }
+
+            match_idx_cache.resize(self.parameters.cache_size, None);
+            match_score_cache.resize(self.parameters.cache_size, None);
 
             let score = self.score_candidate(
                 &query,
@@ -346,5 +343,30 @@ impl<'a> Matcher<'a> {
         match_idx_cache[cache_offset] = best_match_index;
 
         score
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate test;
+
+    use super::*;
+    use self::test::{Bencher, black_box};
+
+    /// Exact matches should always return a perfect score of 1.0f32 and take precedence over any other matches.
+    #[test]
+    pub fn exact_match_has_perfect_score() {
+        let searcher = Matcher::new("my_word1", 1000).unwrap();
+        let results = searcher.search("my_word1", 1);
+
+        assert_eq!(1.0f32, results[0].score());
+    }
+
+    /// A benchmark that searches through a list of 13k files from the Unreal Engine 4 source code.
+    #[bench]
+    fn unreal_engine_search(b: &mut Bencher) {
+        let searcher =
+            Matcher::new(include_str!("../benchmark_data/ue4_file_list.txt"), 1000).unwrap();
+        b.iter(|| black_box(searcher.search("file.cpp", 100)))
     }
 }
