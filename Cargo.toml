@@ -6,11 +6,7 @@ description = "An approximate string matching library built with the web in mind
 license = "ISC"
 
 [features]
-webassembly = ["wee_alloc"]
+webassembly = []
 
 [profile.release]
 debug = true
-
-[dependencies]
-wee_alloc = { version = "0.2.0", optional = true }
-

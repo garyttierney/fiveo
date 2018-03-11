@@ -10,8 +10,6 @@
 #[cfg(feature = "webassembly")]
 extern crate alloc;
 #[cfg(feature = "webassembly")]
-extern crate wee_alloc;
-#[cfg(feature = "webassembly")]
 use {alloc::{BinaryHeap, Vec}, core::{cmp, iter, str, f32, num::Float}};
 
 // When we're not targetting webassembly, import the same types from libstd.
