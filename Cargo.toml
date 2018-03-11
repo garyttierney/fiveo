@@ -4,7 +4,6 @@ version = "0.2.0"
 authors = ["Gary Tierney <gary.tierney@gmx.com>"]
 description = "An approximate string matching library built with the web in mind"
 license = "ISC"
-license-file = "LICENSE"
 
 [features]
 webassembly = ["wee_alloc"]

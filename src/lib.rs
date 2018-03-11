@@ -4,6 +4,8 @@
 #![feature(test)]
 // Don't build with the standard library when targeting WebAssembly.
 #![cfg_attr(feature = "webassembly", no_std)]
+// We want to disable the default allocator and rely on `wee_alloc` for allocations in WebAssembly builds.  We include the
+// `alloc` crate for some extra core functionality.
 #![cfg_attr(feature = "webassembly",
             feature(alloc, core_intrinsics, core_float, lang_items, global_allocator))]
 #[cfg(feature = "webassembly")]
@@ -11,13 +13,14 @@ extern crate alloc;
 #[cfg(feature = "webassembly")]
 extern crate wee_alloc;
 #[cfg(feature = "webassembly")]
-use {alloc::{BinaryHeap, Vec}, core::{cmp, iter, str, num::Float, f32}};
+use {alloc::{BinaryHeap, Vec}, core::{cmp, iter, str, f32, num::Float}};
 #[cfg_attr(feature = "webasembly", global_allocator)]
 #[cfg(feature = "webassembly")]
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
+// When we're not targetting webassembly, import the same types from libstd.
 #[cfg(not(feature = "webassembly"))]
-use std::{f32, cmp, iter, str, collections::BinaryHeap};
+use std::{cmp, iter, str, collections::BinaryHeap, f32};
 
 /// A 32-bit bitmask that maps the alphabet to the first 25 bits.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -94,6 +97,7 @@ impl SearchResult {
     }
 }
 
+/// A set of parameters that can be tuned to change the scores assigned to certain matches.
 pub struct MatcherParameters {
     /// The bonus for a matching character found after a slash.
     slash_bonus: f32,
@@ -115,18 +119,36 @@ pub struct MatcherParameters {
     cache_size: usize,
 }
 
+/// Define a sane set of default `MatcherParameters` that adhere to the same parameters followed by Cmd-T.
+///
+/// The rules in these default parameters prefers slashes over separators, and camelcase / separators over periods, with a max gap of 10.
+impl Default for MatcherParameters {
+    fn default() -> Self {
+        MatcherParameters {
+            camelcase_bonus: 0.8f32,
+            separator_bonus: 0.8f32,
+            slash_bonus: 0.9f32,
+            period_bonus: 0.7f32,
+            max_gap: 10,
+            cache_size: 2000,
+        }
+    }
+}
+
 /// A fuzzy-search algorithm that uses bitmasks to perform fast string comparisons.
 ///
 /// # Example:
 ///
 /// ```rust
-/// let searcher = fiveo::Matcher::new("my_word1\nmy_word2\n", 1000).unwrap();
+/// let searcher = fiveo::Matcher::new("my_word1\nmy_word2\n", fiveo::MatcherParameters::default()).unwrap();
 /// // Search for "my_word1" and return a maximum of 10 results.
 /// let matches = searcher.search("my_word1", 10);
 /// ```
 pub struct Matcher<'a> {
     /// A list of entries in this `Matcher`s dictionary.
     candidates: Vec<Candidate<'a>>,
+
+    /// The parameters used to tune the scoring function.
     parameters: MatcherParameters,
 }
 
@@ -135,31 +157,14 @@ pub enum MatcherError {
     TextEncoding(str::Utf8Error),
 }
 
-impl From<MatcherError> for u32 {
-    fn from(t: MatcherError) -> u32 {
-        match t {
-            MatcherError::TextEncoding(_) => 1,
-        }
-    }
-}
-
 impl<'a> Matcher<'a> {
     /// Create a new `Matcher` from the given input data.  The input data should contain
     /// a list of input entries delimited by newlines that a matching dictionary can be built from.
-    pub fn new(dictionary: &str, cache_size: usize) -> Result<Matcher, MatcherError> {
+    pub fn new(dictionary: &str, parameters: MatcherParameters) -> Result<Matcher, MatcherError> {
         let candidates = dictionary
             .lines()
             .map(|line| Candidate::from(line))
             .collect();
-
-        let parameters = MatcherParameters {
-            camelcase_bonus: 0.8f32,
-            separator_bonus: 0.8f32,
-            slash_bonus: 0.9f32,
-            period_bonus: 0.7f32,
-            max_gap: 10,
-            cache_size,
-        };
 
         Ok(Matcher {
             candidates,
@@ -213,6 +218,8 @@ impl<'a> Matcher<'a> {
         result_heap.into_sorted_vec()
     }
 
+    /// Score the given `candidate` against the search query`.  Use the `match_idx_cache_` and `match_score_cache` to memoize calls
+    /// to the `score_candidate_recursive` fn.
     fn score_candidate(
         &self,
         query: &str,
@@ -278,7 +285,7 @@ impl<'a> Matcher<'a> {
         // Position of the last back/forwards slash that was found.
         let mut last_slash: Option<usize> = None;
 
-        while let Some((candidate_char_index, candidate_char)) = candidate_chars.next()  {
+        while let Some((candidate_char_index, candidate_char)) = candidate_chars.next() {
             if remaining_candidate_chars == 0 {
                 break;
             }
@@ -346,12 +353,12 @@ mod tests {
     extern crate test;
 
     use super::*;
-    use self::test::{Bencher, black_box};
+    use self::test::{black_box, Bencher};
 
     /// Exact matches should always return a perfect score of 1.0f32 and take precedence over any other matches.
     #[test]
     pub fn exact_match_has_perfect_score() {
-        let searcher = Matcher::new("my_word1", 1000).unwrap();
+        let searcher = Matcher::new("my_word1", MatcherParameters::default()).unwrap();
         let results = searcher.search("my_word1", 1);
 
         assert_eq!(1.0f32, results[0].score());
@@ -360,8 +367,11 @@ mod tests {
     /// A benchmark that searches through a list of 13k files from the Unreal Engine 4 source code.
     #[bench]
     fn unreal_engine_search(b: &mut Bencher) {
-        let searcher =
-            Matcher::new(include_str!("../benchmark_data/ue4_file_list.txt"), 1000).unwrap();
+        let searcher = Matcher::new(
+            include_str!("../benchmark_data/ue4_file_list.txt"),
+            MatcherParameters::default(),
+        ).unwrap();
+
         b.iter(|| black_box(searcher.search("file.cpp", 100)))
     }
 }
