@@ -6,17 +6,13 @@
 #![cfg_attr(feature = "webassembly", no_std)]
 // We want to disable the default allocator and rely on `wee_alloc` for allocations in WebAssembly builds.  We include the
 // `alloc` crate for some extra core functionality.
-#![cfg_attr(feature = "webassembly",
-            feature(alloc, core_intrinsics, core_float, lang_items, global_allocator))]
+#![cfg_attr(feature = "webassembly", feature(alloc, core_intrinsics, core_float))]
 #[cfg(feature = "webassembly")]
 extern crate alloc;
 #[cfg(feature = "webassembly")]
 extern crate wee_alloc;
 #[cfg(feature = "webassembly")]
 use {alloc::{BinaryHeap, Vec}, core::{cmp, iter, str, f32, num::Float}};
-#[cfg_attr(feature = "webasembly", global_allocator)]
-#[cfg(feature = "webassembly")]
-static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
 // When we're not targetting webassembly, import the same types from libstd.
 #[cfg(not(feature = "webassembly"))]
