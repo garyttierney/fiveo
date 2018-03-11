@@ -290,7 +290,9 @@ impl<'a> Matcher<'a> {
                 last_slash = Some(candidate_char_index);
             }
 
-            if query_char == candidate_char {
+            if query_char == candidate_char
+                || query_char.to_lowercase().eq(candidate_char.to_lowercase())
+            {
                 let query_char_score = if candidate_char_index == candidate_start_index {
                     1.0f32
                 } else {
