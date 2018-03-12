@@ -192,7 +192,9 @@ impl<'a> Matcher<'a> {
                 continue;
             }
 
+            match_idx_cache.clear();
             match_idx_cache.resize(self.parameters.cache_size, None);
+            match_score_cache.clear();
             match_score_cache.resize(self.parameters.cache_size, None);
 
             let score = self.score_candidate(
