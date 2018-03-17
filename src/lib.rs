@@ -184,18 +184,16 @@ impl<'a> Matcher<'a> {
         let query_lowercase = query.to_lowercase();
         let query_mask = CandidateBitmask::from(&mut query_lowercase.chars());
         let mut result_heap: BinaryHeap<SearchResult> = BinaryHeap::with_capacity(max_results);
-        let mut match_idx_cache = Vec::with_capacity(self.parameters.cache_size);
-        let mut match_score_cache = Vec::with_capacity(self.parameters.cache_size);
-
         for (candidate_index, candidate) in self.candidates.iter().enumerate() {
             if !query_mask.matches(&candidate.mask) {
                 continue;
             }
 
-            match_idx_cache.clear();
-            match_idx_cache.resize(self.parameters.cache_size, None);
-            match_score_cache.clear();
-            match_score_cache.resize(self.parameters.cache_size, None);
+            let cache_len = query.len() * candidate.value.len();
+            let mut match_idx_cache = Vec::with_capacity(cache_len);
+            let mut match_score_cache = Vec::with_capacity(cache_len);
+            match_idx_cache.resize(cache_len, None);
+            match_score_cache.resize(cache_len, None);
 
             let score = self.score_candidate(
                 query,
