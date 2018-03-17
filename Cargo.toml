@@ -1,6 +1,6 @@
 [package]
 name = "fiveo"
-version = "0.3.1"
+version = "0.3.2"
 authors = ["Gary Tierney <gary.tierney@gmx.com>"]
 description = "An approximate string matching library built with the web in mind"
 license = "ISC"

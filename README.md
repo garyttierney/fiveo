@@ -35,7 +35,7 @@ fn main() {
 
 ```toml
 [dependencies]
-five = "0.3.1"
+five = "0.3.2"
 ```
 
 By default `fiveo` will be built and linked against the Rust standard library.  For usage in WebAssembly builds there is a compilation feature
@@ -45,7 +45,7 @@ You can activate those features like this:
 
 ```toml
 [dependencies.fiveo]
-version = "0.3.1"
+version = "0.3.2"
 features = ["webassembly"]
 ```
 
