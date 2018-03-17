@@ -94,32 +94,32 @@ impl SearchResult {
 /// A set of parameters that can be tuned to change the scores assigned to certain matches.
 pub struct MatcherParameters {
     /// The bonus for a matching character found after a slash.
-    slash_bonus: f32,
+    pub slash_bonus: f32,
 
     /// The bonus for a matching character found after a separator.
-    separator_bonus: f32,
+    pub separator_bonus: f32,
 
     /// The bonus for a matching character found as a separator of a CamelCase string.
-    camelcase_bonus: f32,
+    pub camelcase_bonus: f32,
 
     /// The bonus for a matching character found after a period.
-    period_bonus: f32,
+    pub period_bonus: f32,
 
     /// The maximum gap between a search character and a match to be considered before moving to the next character.
-    max_gap: usize,
+    pub max_gap: usize,
 
     /// The size of the cache that will be allocated each search for memoizing score function calls.  Query/candidate pairs exceeding
     /// this size will only be matched using the simple matcher.
-    cache_size: usize,
+    pub cache_size: usize,
 
     /// The base distance penalty for matches occurring after proceeding without a successful match.
-    distance_penalty: f32,
+    pub distance_penalty: f32,
 
     /// The lowest value the distance penalty can decrease to.
-    min_distance_penalty: f32,
+    pub min_distance_penalty: f32,
 
     /// The increment that the distance penalty decreases in.
-    cumulative_distance_penalty: f32,
+    pub cumulative_distance_penalty: f32,
 }
 
 /// Define a sane set of default `MatcherParameters` that adhere to the same parameters followed by Cmd-T.
